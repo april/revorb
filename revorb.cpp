@@ -1,8 +1,11 @@
 /*
  * REVORB - Recomputes page granule positions in Ogg Vorbis files.
- *   version 0.2 (2008/06/29)
+ *   version 0.2 (2008/06/29) - initial release
+ *   version 0.3 (2022/08/05) - rewrite into standard C++ to combile on macOS
+ *                              and other POSIX systems
  *
  * Copyright (c) 2008, Jiri Hruska <jiri.hruska@fud.cz>
+ * Copyright (c) 2022, April King <april@grayduck.mn>
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -17,36 +20,31 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-/*# INCLUDE=.\include #*/
-/*# LIB=.\lib         #*/
-/*# CFLAGS=/D_UNICODE #*/
-/*# LFLAGS=/NODEFAULTLIB:MSVCRT /LTCG /OPT:REF /MANIFEST:NO #*/
+#include <cstdio>
+#include <fstream>
+#include <iostream>
+#include <string>
+using namespace std;
 
-#include <stdio.h>
-#include <io.h>
-#include <fcntl.h>
-#include <string.h>
 #include <ogg/ogg.h>
-#pragma comment(lib, "libogg-rsd.lib")
 #include <vorbis/codec.h>
-#pragma comment(lib, "libvorbis-rsd.lib")
-#pragma comment(lib, "msvcrt-ddk.lib")
-#pragma comment(lib, "bufferoverflowu.lib")
-#pragma comment(lib, "libcmt.lib")
 
 bool g_failed;
 
-bool copy_headers(FILE *fi, ogg_sync_state *si, ogg_stream_state *is,
-                  FILE *fo, ogg_sync_state *so, ogg_stream_state *os,
+bool copy_headers(istream &fi, ogg_sync_state *si, ogg_stream_state *is,
+                  ofstream& fo, ogg_sync_state *so, ogg_stream_state *os,
                   vorbis_info *vi)
 {
+  // read in the first block
   char *buffer = ogg_sync_buffer(si, 4096);
-  int numread = fread(buffer, 1, 4096, fi);
+  fi.read(buffer, 4096);
+  int numread = fi.gcount();
+
   ogg_sync_wrote(si, numread);
 
   ogg_page page;
   if (ogg_sync_pageout(si, &page) != 1) {
-    fprintf(stderr, "Input is not an Ogg.\n");
+    cerr << "Input file is not an Ogg file.\n";
     return false;
   }
 
@@ -54,7 +52,7 @@ bool copy_headers(FILE *fi, ogg_sync_state *si, ogg_stream_state *is,
   ogg_stream_init(os, ogg_page_serialno(&page));
 
   if (ogg_stream_pagein(is,&page) < 0) {
-    fprintf(stderr, "Error in the first page.\n");
+    cerr << "Error in the first page.\n";
     ogg_stream_clear(is);
     ogg_stream_clear(os);
     return false;
@@ -71,7 +69,7 @@ bool copy_headers(FILE *fi, ogg_sync_state *si, ogg_stream_state *is,
   vorbis_comment vc;
   vorbis_comment_init(&vc);
   if (vorbis_synthesis_headerin(vi, &vc, &packet) < 0) {
-    fprintf(stderr, "Error in header, probably not a Vorbis file.\n");
+    cerr << "Error in header, probably not a Vorbis file.\n";
     vorbis_comment_clear(&vc);
     ogg_stream_clear(is);
     ogg_stream_clear(os);
@@ -86,9 +84,10 @@ bool copy_headers(FILE *fi, ogg_sync_state *si, ogg_stream_state *is,
 
     if (res == 0) {
       buffer = ogg_sync_buffer(si, 4096);
-      numread = fread(buffer, 1, 4096, fi);
+      fi.read(buffer, 4096);
+      int numread = fi.gcount();
       if (numread == 0 && i < 2) {
-        fprintf(stderr, "Headers are damaged, file is probably truncated.\n");
+        cerr << "Headers are damaged, file is probably truncated.\n";
         ogg_stream_clear(is);
         ogg_stream_clear(os);
         return false;
@@ -104,7 +103,7 @@ bool copy_headers(FILE *fi, ogg_sync_state *si, ogg_stream_state *is,
         if (res == 0)
           break;
         if (res < 0) {
-          fprintf(stderr, "Secondary header is corrupted.\n");
+          cerr << "Secondary header is corrupted.\n";
           vorbis_comment_clear(&vc);
           ogg_stream_clear(is);
           ogg_stream_clear(os);
@@ -119,9 +118,9 @@ bool copy_headers(FILE *fi, ogg_sync_state *si, ogg_stream_state *is,
 
   vorbis_comment_clear(&vc);
 
-  while(ogg_stream_flush(os,&page)) {
-    if (fwrite(page.header, 1, page.header_len, fo) != page.header_len || fwrite(page.body, 1, page.body_len, fo) != page.body_len) {
-      fprintf(stderr,"Cannot write headers to output.\n");
+  while(ogg_stream_flush(os, &page)) {
+    if (fo.write((char *)page.header, page.header_len).bad() || fo.write((char *)page.body, page.body_len).bad()) {
+      cerr << "Cannot write headers to output.\n";
       ogg_stream_clear(is);
       ogg_stream_clear(os);
       return false;
@@ -131,49 +130,37 @@ bool copy_headers(FILE *fi, ogg_sync_state *si, ogg_stream_state *is,
   return true;
 }
 
-int wmain(int argc, wchar_t **argv)
+int main(int argc, char *argv[])
 {
   if (argc < 2) {
-    fprintf(stderr, "-= REVORB - <yirkha@fud.cz> 2008/06/29 =-\n");
-    fprintf(stderr, "Recomputes page granule positions in Ogg Vorbis files.\n");
-    fprintf(stderr, "Usage:\n");
-    fprintf(stderr, "  revorb <input.ogg> [output.ogg]\n");
+    cerr <<
+    "-= REVORB - <yirkha@fud.cz>     2008/06/29 =-\n"
+    "-=          <april@grayduck.mn> 2022/09/05 =-\n"
+    "Recomputes page granule positions in Ogg Vorbis files.\n"
+    "Usage:\n"
+    "  revorb <input.ogg> [output.ogg]\n";
     return 1;
   }
 
-  FILE *fi;
-  if (!wcscmp(argv[1], L"-")) {
-    fi = stdin;
-    _setmode(_fileno(stdin), _O_BINARY);
-  } else {
-    fi = _wfopen(argv[1], L"rb");
-    if (!fi) {
-      fprintf(stderr, "Could not open input file.\n");
+  string ifilename = argv[1];
+  istream& fi = ifilename.compare("-") ? *(new ifstream(ifilename, ios::binary)) : cin;
+  string tmpName;
+  ofstream fo;
+
+  if (argc >= 3) {
+    string output = argv[2];
+    fo.open(output, ios::binary);
+    if (fo.bad()) {
+      fprintf(stderr, "Could not open output file.\n");
+      delete fi;
       return 2;
     }
-  }
-
-  wchar_t tmpName[260];
-  FILE *fo;
-  if (argc >= 3) {
-    if (!wcscmp(argv[2], L"-")) {
-      fo = stdout;
-      _setmode(_fileno(stdout), _O_BINARY);
-    } else {
-      fo = _wfopen(argv[2], L"wb");
-      if (!fo) {
-        fprintf(stderr, "Could not open output file.\n");
-        fclose(fi);
-        return 2;
-      }
-    }
   } else {
-    wcscpy(tmpName, argv[1]);
-    wcscat(tmpName, L".tmp");
-    fo = _wfopen(tmpName, L"wb");
-    if (!fo) {
+    tmpName = ifilename + ".tmp";
+    fo.open(tmpName, ios::binary);
+    if (fo.bad()) {
       fprintf(stderr, "Could not open output file.\n");
-      fclose(fi);
+      delete fi;
       return 2;
     }
     g_failed = false;
@@ -195,14 +182,13 @@ int wmain(int argc, wchar_t **argv)
     int lastbs = 0;
 
     while(1) {
-//    ogg_int64_t logstream_startgran = granpos;
-
       int eos = 0;
       while(!eos) {
         int res = ogg_sync_pageout(&sync_in, &page);
         if (res == 0) {
           char *buffer = ogg_sync_buffer(&sync_in, 4096);
-          int numread = fread(buffer, 1, 4096, fi);
+          fi.read(buffer, 4096);
+          int numread = fi.gcount();
           if (numread > 0)
             ogg_sync_wrote(&sync_in, numread);
           else
@@ -246,7 +232,7 @@ int wmain(int argc, wchar_t **argv)
 
               ogg_page opage;
               while(ogg_stream_pageout(&stream_out, &opage)) {
-                if (fwrite(opage.header, 1, opage.header_len, fo) != opage.header_len || fwrite(opage.body, 1, opage.body_len, fo) != opage.body_len) {
+                if (fo.write((char *)opage.header, opage.header_len).bad() || fo.write((char *)opage.body, opage.body_len).bad()) {
                   fprintf(stderr, "Unable to write page to output.\n");
                   eos = 2;
                   g_failed = true;
@@ -266,8 +252,8 @@ int wmain(int argc, wchar_t **argv)
         ogg_stream_packetin(&stream_out, &packet);
         ogg_page opage;
         while(ogg_stream_flush(&stream_out, &opage)) {
-          if (fwrite(opage.header, 1, opage.header_len, fo) != opage.header_len || fwrite(opage.body, 1, opage.body_len, fo) != opage.body_len) {
-            fprintf(stderr, "Unable to write page to output.\n");
+          if (fo.write((char *)opage.header, opage.header_len).bad() || fo.write((char *)opage.body, opage.body_len).bad()) {
+            cerr << "Unable to write page to output.\n";
             g_failed = true;
             break;
           }
@@ -287,15 +273,15 @@ int wmain(int argc, wchar_t **argv)
   ogg_sync_clear(&sync_in);
   ogg_sync_clear(&sync_out);
 
-  fclose(fi);
-  fclose(fo);
+  delete fi;
+  fo.close();
 
   if (argc < 3) {
     if (g_failed) {
-      _wunlink(tmpName);
+      remove(tmpName.c_str());
     } else {
-      if (_wunlink(argv[1]) || _wrename(tmpName, argv[1]))
-        fprintf(stderr, "%S: Could not put the output file back in place.\n", tmpName);
+      if (remove(ifilename.c_str()) || rename(tmpName.c_str(), ifilename.c_str()))
+        fprintf(stderr, "%s: Could not put the output file back in place.\n", tmpName.c_str());
     }
   }
   return 0;
