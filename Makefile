@@ -1,5 +1,10 @@
+CC = clang++
+CXXFLAGS = -I/opt/homebrew/include
+LDFLAGS = -L/opt/homebrew/lib
+LIBS = -logg -lvorbis
+
 revorb:
-	clang++ -I /opt/homebrew/include -L /opt/homebrew/lib -logg -lvorbis -w revorb.cpp -o revorb 
+	$(CC) $(CXXFLAGS) $(LDFLAGS) $(LIBS) -w revorb.cpp -o revorb 
 
 clean:
 	rm revorb

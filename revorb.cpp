@@ -1,7 +1,7 @@
 /*
  * REVORB - Recomputes page granule positions in Ogg Vorbis files.
  *   version 0.2 (2008/06/29) - initial release
- *   version 0.3 (2022/08/05) - rewrite into standard C++ to combile on macOS
+ *   version 0.3 (2022/08/05) - rewrite into standard C++ to compile on macOS
  *                              and other POSIX systems
  *
  * Copyright (c) 2008, Jiri Hruska <jiri.hruska@fud.cz>
