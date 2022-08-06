@@ -214,12 +214,6 @@ int main(int argc, char *argv[])
               continue;
             }
 
-            /*
-            if (packet.granulepos >= 0) {
-              granpos = packet.granulepos + logstream_startgran;
-              packet.granulepos = granpos;
-            }
-            */
             int bs = vorbis_packet_blocksize(&vi, &packet);
             if (lastbs)
               granpos += (lastbs+bs) / 4;
